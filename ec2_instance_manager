@@ -3,8 +3,8 @@
 
 import argparse
 import logging
-import sys
 from   os.path import expanduser
+import sys
 import time
 from   UserDict import IterableUserDict
 
@@ -47,6 +47,7 @@ class InstancePool(object):
             sys.exit(1)
 
     def start(self):
+        instance_ids = []
         for instance in self._instances:
             instance_name = instance.tags['Name']
 
@@ -57,11 +58,14 @@ class InstancePool(object):
             print 'Starting {}...'.format(instance_name)
             if not self._dry_run:
                 instance.start()
-                while self._blocking and self._get_status(instance.id) != RUNNING:
-                    time.sleep(1)
-                    continue
+                instance_ids.append(instance.id)
+
+        while not self._check_states(instance_ids, RUNNING):
+            time.sleep(1)
+            continue
 
     def stop(self):
+        instance_ids = []
         for instance in self._instances:
             instance_name = instance.tags['Name']
 
@@ -72,11 +76,14 @@ class InstancePool(object):
             print 'Stopping {}...'.format(instance_name)
             if not self._dry_run:
                 instance.stop()
-                while self._blocking and self._get_status(instance.id) != STOPPED:
-                    time.sleep(1)
-                    continue
+                instance_ids.append(instance.id)
+
+        while not self._check_states(instance_ids, STOPPED):
+            time.sleep(1)
+            continue
 
     def reboot(self):
+        instance_ids = []
         for instance in self._instances:
             instance_name = instance.tags['Name']
 
@@ -87,33 +94,43 @@ class InstancePool(object):
             print 'Rebooting {}...'.format(instance_name)
             if not self._dry_run:
                 instance.reboot()
-                while self._blocking and self._get_status(instance.id) != RUNNING:
-                    time.sleep(1)
-                    continue
+                instance_ids.append(instance.id)
+
+        while not self._check_states(instance_ids, RUNNING):
+            time.sleep(1)
+            continue
 
     def state(self):
         for instance in self._instances:
             print 'Instance {} state: {}'.format(instance.tags['Name'], instance.state)
 
-    def _get_status(self, instance_id):
-        state = self._conn.get_all_instance_status(instance_ids=[instance_id], include_all_instances=True).pop()
-        return state.state_code
+    def _check_states(self, instance_ids, state):
+        return all(map(lambda state_: state_ == state, self._get_status(instance_ids)))
+
+    def _get_status(self, instance_ids):
+        states = self._conn.get_all_instance_status(instance_ids=instance_ids, include_all_instances=True)
+        if not instance_ids:
+            states = []
+        return map(lambda state: state.state_code, states)
 
 
 class Config(IterableUserDict):
     """Load config file.
 
     Support two types of config files:
-        user specific: ~/.imgr.yaml
-        site wide: /etc/imgr.yaml
-
-    If both file exist, the user specific file will overwirte the site wide one.
+        user specific: ~/.ec2_instance_manager.yaml
+        site wide: /etc/ec2_instance_manager.yaml
 
     The config file should be a yaml file in the following format:
         instance_group1: [instance_id_1, instance_id_2]
         instance_group2: [instance_id_3, instance_id_4]
+
+    If both file exist, the user specific file will overwirte the site wide one.
     """
-    config_file_path = dict(user='{}/.imgr.yaml'.format(expanduser('~')), site='/etc/imgr.yaml')
+    config_file_path = dict(
+        user='{}/.ec2_instance_manager.yaml'.format(expanduser('~')),
+        site='/etc/ec2_instance_manager.yaml'
+    )
 
     def __init__(self):
         IterableUserDict.__init__(self)
@@ -137,14 +154,34 @@ class Config(IterableUserDict):
 
 def parse_args():
     commands = ['start', 'stop', 'reboot', 'state']
-    parser = argparse.ArgumentParser(description="AWS instances manager")
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""AWS instances manager
+
+This script can be used to start, stop, reboot or check states of the given instances.
+
+To specify the instances you want the command to run on, you can either use a string that
+contains a list of instance ids seperated by the --delimiter argument, or you can setup
+your own instance groups in a config file. Two types of config file are supported:
+
+    user specific: ~/.ec2_instance_manager.yaml
+    site wide: /etc/ec2_instance_manager.yaml
+
+The config file should be a yaml file in the following format:
+    instance_group1: [instance_id_1, instance_id_2]
+    instance_group2: [instance_id_3, instance_id_4]
+
+If both file exist, the groups found in user specific file will overwirte the ones in
+site wide file.
+""")
     parser.add_argument('-v', '--verbose', action='store_true', help='Print more information')
     parser.add_argument('-vv', '--nagging', action='store_true', help='Print even more information')
     parser.add_argument('-g', '--group', action='store_true', help='Use instance group from config file')
     parser.add_argument('-t', '--dry-run', action='store_true', help='Dry run')
-    parser.add_argument('-n', '--non-blocking', action='store_true', help='Do not block')
-    parser.add_argument('-d', '--delimiter', default=',', help='Delimiter to seperate instances')
-    parser.add_argument('command', choices=commands, help='Command to run')
+    parser.add_argument('-n', '--non-blocking', action='store_true', help='By default, the script will be blocked \
+            (will not exit) while executing the command, set this flag will make the command non blocking')
+    parser.add_argument('-d', '--delimiter', default=',', help='Delimiter used to seperate instances')
+    parser.add_argument('command', choices=commands, help='Command to run on each of the instances')
     parser.add_argument('instances', help='Instance ids seperated by --delimiter, if --group is enabled, this value \
             will be interpreted as instance group and the script will lookup the config file for the instance ids \
             under this group')
