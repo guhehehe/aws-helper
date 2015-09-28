@@ -60,7 +60,7 @@ class InstancePool(object):
                 instance.start()
                 instance_ids.append(instance.id)
 
-        while not self._check_states(instance_ids, RUNNING):
+        while self._blocking and not self._check_states(instance_ids, RUNNING):
             time.sleep(1)
             continue
 
@@ -78,7 +78,7 @@ class InstancePool(object):
                 instance.stop()
                 instance_ids.append(instance.id)
 
-        while not self._check_states(instance_ids, STOPPED):
+        while self._blocking and not self._check_states(instance_ids, STOPPED):
             time.sleep(1)
             continue
 
@@ -96,7 +96,7 @@ class InstancePool(object):
                 instance.reboot()
                 instance_ids.append(instance.id)
 
-        while not self._check_states(instance_ids, RUNNING):
+        while self._blocking and not self._check_states(instance_ids, RUNNING):
             time.sleep(1)
             continue
 
